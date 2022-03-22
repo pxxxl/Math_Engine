@@ -29,7 +29,7 @@ namespace me {
 
 		void inputEquation(equation a);
 
-		void setFreeVariable(std::vector<variable> free_varieble);
+		void setFreeVariable(variable free_varieble);
 
 		void solve();
 
@@ -91,11 +91,10 @@ namespace me {
 		return;
 	}
 
-	inline void linearEquations::setFreeVariable(std::vector<std::string> free_varieble)
+	inline void linearEquations::setFreeVariable(variable free_varieble)
 	{
 		//find : iterator return
-		auto findVariableFromConstrait = [this](std::string sample)->decltype(constraint_variables.begin()) {
-			auto size = constraint_variables.size();
+		auto findVariableFromConstrait = [this](variable sample)->decltype(constraint_variables.begin()) {
 			auto be = constraint_variables.begin();
 			auto en = constraint_variables.end();
 			for (; be != en; be++) {
@@ -107,31 +106,27 @@ namespace me {
 		};
 		//find : false return
 		auto findVariableFromFree = [this](std::string sample)->int {
-			auto be = free_variables.begin();
-			auto en = free_variables.end();
-			for (; be != en; be++) {
-				if (*be == sample) {
+			for (auto& item : free_variables) {
+				if (item == sample) {
 					return false;
 				}
 			}
 			return true;
 		};
-		auto be = free_varieble.begin();
-		auto en = free_varieble.end();
-		decltype(be) target;
-		for (; be != en; be++) {
-			target = findVariableFromConstrait(*be);
+		decltype(free_variables.begin()) target;
+		for (auto item : free_variables) {
+			target = findVariableFromConstrait(item);
 			if (target == constraint_variables.end()) {
 				//not find 
-				throw std::runtime_error("From eci::linearEquations:setFreeVariable : free varieble " + *be + " set failed, no such varieble has stored in constraint variables");
+				throw std::runtime_error("From eci::linearEquations:setFreeVariable : free varieble " + item + " set failed, no such varieble has stored in constraint variables");
 			}
 			else {
-				if (!findVariableFromFree(*be)) {
+				if (!findVariableFromFree(item)) {
 					//find in free variable
-					throw std::runtime_error("From eci::linearEquations:setFreeVariable : free varieble " + *be + " set failed, varieble has already stored in free variables");
+					throw std::runtime_error("From eci::linearEquations:setFreeVariable : free varieble " + item + " set failed, varieble has already stored in free variables");
 				}
 				constraint_variables.erase(target);
-				free_variables.push_back(*be);
+				free_variables.push_back(item);
 				variable_count;
 				free_variable_count++;
 			}
@@ -141,60 +136,62 @@ namespace me {
 
 	inline void linearEquations::solve()
 	{
-		std::vector<std::string> variable_queue;
-		auto be_v = constraint_variables.begin();
-		auto en_v = constraint_variables.end();
 		unsigned num = 0;
-		for (; be_v != en_v; be_v++, num++) {
-			variable_queue.push_back(*be_v);
-			serial_map.insert(std::pair(*be_v, num));
+		for (auto item : constraint_variables) {
+			anti_serial_map.push_back(item);
+			serial_map.insert(std::pair(item, num));
+			num++;
 		}
 		for (int count = free_variables.size() - 1; count >= 0; count--) {
-			variable_queue.push_back(free_variables[count]);
+			anti_serial_map.push_back(free_variables[count]);
 			serial_map.insert(std::pair(free_variables[count], num));
 			num++;
 		}
-		variable_queue.push_back(std::string(""));
+		anti_serial_map.push_back(std::string(""));
 		serial_map.insert(std::pair(std::string(""), num));
+
 		//construct matrix;
-		solution_matrix = new eds::matrix<double>(equation_count, variable_count);
-		auto be_e = equations.begin();
-		auto en_e = equations.end();
-		decltype(((*be_e).first).begin()) be_poly;
-		decltype(((*be_e).first).end()) en_poly;
+		solution_matrix = new matrix<double>(equation_count, variable_count + 1);
 		unsigned cur_column = 0;
-		for (unsigned line = 0; be_e != en_e; be_e++, line++) {
-			be_poly = ((*be_e).first).begin();
-			en_poly = ((*be_e).first).end();
-			for (; be_poly != en_poly; be_poly++) {
-				cur_column = serial_map[(*be_poly).second];
-				(*solution_matrix).reset(line, cur_column, (*solution_matrix).get(line, cur_column) + (*be_poly).first);
+		unsigned line = 0;
+		for (auto& equa : equations) {
+			for (auto& terms : equa.left) {
+				cur_column = serial_map[terms.var];
+				(*solution_matrix).reset(line, cur_column, (*solution_matrix).get(line, cur_column) + terms.coe);
 			}
+			for (auto& terms : equa.right) {
+				cur_column = serial_map[terms.var];
+				(*solution_matrix).reset(line, cur_column, (*solution_matrix).get(line, cur_column) + terms.coe);
+			}
+			line++;
 		}
+
 		//solve the matrix
 		*solution_matrix = (*solution_matrix).std_line_form();
 
 		//check the result
 		unsigned mat_line_max = equation_count;
-		unsigned mat_column_max = variable_count;
-		auto is_solutionless = [this](eds::matrix<double> mat)->bool {
+		unsigned mat_column_max = variable_count + 1;
+		auto is_solutionless = [&](matrix<double>* mat)->bool {
 			bool flag = true;
-			unsigned right_column = equation_count - 1;
-			for (unsigned line = 0; line < variable_count; line++) {
-				if (eds::is_zero(mat.get(line, right_column))) {
+			unsigned right_column = mat_column_max - 1;
+			for (unsigned line = 0; line < mat_line_max; line++) {
+				auto co = mat->get(line, right_column);
+				if (is_zero(co)) {
 					continue;
 				}
 				for (unsigned left_column = 0; left_column < right_column; left_column++) {
-					if (!eds::is_zero(mat.get(line, left_column))) {
+					co = mat->get(line, left_column);
+					if (is_zero(co)) {
 						continue;
 					}
+					flag = false;
 				}
-				flag = false;
 			}
-			return !flag;
+			return flag;
 		};
-		if (is_solutionless(*solution_matrix)) {
-			status = ERROR_SOLUTION;
+		if (is_solutionless(solution_matrix)) {
+			status = ERROR;
 			return;
 		}
 		else {
@@ -206,12 +203,12 @@ namespace me {
 					cur_column++;
 				}
 				else {
-					auto x_name = variable_queue[cur_column];
+					auto x_name = anti_serial_map[cur_column];
 					polynomial x_solve;
 					for (unsigned i = cur_column + 1; i < mat_column_max; i++) {
-						auto item = solution_matrix->get(i, cur_line);
-						if (!eds::is_zero(item)) {
-							x_solve.push_back(std::pair(item, variable_queue[i]));
+						auto co = solution_matrix->get(i, cur_line);
+						if (!is_zero(co)) {
+							x_solve.push_back(term{ co, anti_serial_map[i] });
 						}
 					}
 					solution_map.insert(std::pair(x_name, x_solve));
